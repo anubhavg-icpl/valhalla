@@ -45,11 +45,11 @@ fn clean() -> Result<(), DynError> {
 }
 
 fn produce_driver() -> Result<(), DynError> {
-    build_release_binary("sysmon")?;
-    std::fs::rename("target\\release\\sysmon.dll", "target\\release\\sysmon.sys")?;
+    build_release_binary("valhalla")?;
+    std::fs::rename("target\\release\\valhalla.dll", "target\\release\\valhalla.sys")?;
     sign(
-        "target\\release\\sysmon.sys",
-        "sysmon-km\\DriverCertificate.cer",
+        "target\\release\\valhalla.sys",
+        "valhalla-km\\DriverCertificate.cer",
     )?;
     Ok(())
 }
