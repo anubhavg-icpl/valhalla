@@ -229,13 +229,64 @@ fn format_guid() -> String {
 
 fn build_release_binary(project: &str) -> Result<(), DynError> {
     let cargo = env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
-    let status = Command::new(cargo)
-        .current_dir(project_root())
-        .args(["build", "--release", "-p", project])
-        .status()?;
+    let root = project_root();
 
-    if !status.success() {
-        Err("cargo build failed")?;
+    if project == "valhalla" {
+        // The kernel-mode driver needs special linker flags that must only
+        // apply to the final crate, NOT to build scripts or dependencies.
+        // Using `cargo build` with RUSTFLAGS would break build scripts (which
+        // need std and default libs). Instead use `cargo rustc` which passes
+        // rustc args only to the target crate. Dependencies are built normally
+        // first, then the driver crate is compiled with these flags.
+        let status = Command::new(&cargo)
+            .current_dir(&root)
+            .args([
+                "rustc",
+                "--release",
+                "-p",
+                "valhalla",
+                "--",
+                "-C",
+                "panic=abort",
+                "-Z",
+                "pre-link-arg=/NOLOGO",
+                "-Z",
+                "pre-link-arg=/NXCOMPAT",
+                "-Z",
+                "pre-link-arg=/NODEFAULTLIB",
+                "-Z",
+                "pre-link-arg=/SUBSYSTEM:NATIVE",
+                "-Z",
+                "pre-link-arg=/DRIVER",
+                "-Z",
+                "pre-link-arg=/DYNAMICBASE",
+                "-Z",
+                "pre-link-arg=/MANIFEST:NO",
+                "-Z",
+                "panic_abort_tests",
+                "-C",
+                "link-arg=/OPT:REF,ICF",
+                "-C",
+                "link-arg=/ENTRY:DriverEntry",
+                "-C",
+                "link-arg=/MERGE:.edata=.rdata",
+                "-C",
+                "link-arg=/MERGE:.rustc=.data",
+                "-C",
+                "link-arg=/INTEGRITYCHECK",
+            ])
+            .status()?;
+        if !status.success() {
+            Err("cargo build failed")?;
+        }
+    } else {
+        let status = Command::new(&cargo)
+            .current_dir(&root)
+            .args(["build", "--release", "-p", project])
+            .status()?;
+        if !status.success() {
+            Err("cargo build failed")?;
+        }
     }
 
     Ok(())
