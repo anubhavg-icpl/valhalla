@@ -1,0 +1,14 @@
+[package]
+name = "valhalla-installer"
+version = "0.1.0"
+edition = "2021"
+description = "MSI installer builder for the Valhalla Windows kernel monitor"
+
+[[bin]]
+name = "valhalla-installer"
+path = "src/main.rs"
+
+[dependencies]
+msi = "0.10.0"
+uuid = { version = "1", features = ["v4", "v5"] }
+anyhow = "1"
