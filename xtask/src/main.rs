@@ -78,7 +78,7 @@ fn sign(_driver_path: &str, _cert_path: &str) -> Result<(), DynError> {
     //     "DriverCertificate.cer",
     //     "/t",
     //     "http://timestamp.digicert.com",
-    //     "sysmon.sys"]);
+    //     "valhalla.sys"]);
     //
     // command.stdout(std::io::stdout());
     // let s = command.output()?;
