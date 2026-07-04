@@ -32,8 +32,8 @@ Rust driver based on https://github.com/zodiacon/windowskernelprogrammingbook/tr
 4. Finally stop driver: `sc stop valhalla`
 
 # Module structure
-- **sysmon-km** - driver project which gather particular events from system
-- **sysmon-um** - user mode program to read and display events saved by driver
+- **valhalla-km** - driver project which gather particular events from system
+- **valhalla-um** - user mode program to read and display events saved by driver
 - **common** - shared info between driver and client, like format of data send from driver to client
 - **xtask** - build system
 
