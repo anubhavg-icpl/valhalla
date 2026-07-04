@@ -4,6 +4,7 @@ members = [ "valhalla-km",
     "valhalla-um" ,
     "common" ,
     "xtask" ,
+    "valhalla-installer",
 ]
 
 [workspace.dependencies]
