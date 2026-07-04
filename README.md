@@ -1,4 +1,4 @@
-# Sysmon-rs
+# Valhalla
 Rust driver based on https://github.com/zodiacon/windowskernelprogrammingbook/tree/master/chapter09/SysMon. The goal is to monitor system actions like:
 - process creation
 - thread creation
