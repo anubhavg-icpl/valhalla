@@ -26,10 +26,10 @@ Rust driver based on https://github.com/zodiacon/windowskernelprogrammingbook/tr
 4. Build client: `cargo xtask client`
 
 # How to use
-1. Install driver: `sc create sysmon type=kernel binPath=<driver.sys path>`
-2. Start driver: `sc start sysmon`
-3. Run client to get events: `sysmon-client.exe`
-4. Finally stop driver: `sc stop sysmon`
+1. Install driver: `sc create valhalla type=kernel binPath=<driver.sys path>`
+2. Start driver: `sc start valhalla`
+3. Run client to get events: `valhalla-client.exe`
+4. Finally stop driver: `sc stop valhalla`
 
 # Module structure
 - **sysmon-km** - driver project which gather particular events from system
