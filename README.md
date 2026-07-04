@@ -97,6 +97,10 @@ Events are buffered in a kernel ring (capacity 256 events) and drained by the us
   - [Test signing prerequisites](#test-signing-prerequisites)
   - [Loading the driver](#loading-the-driver)
   - [Unloading the driver](#unloading-the-driver)
+- [MSI Installer](#msi-installer)
+  - [Building the MSI](#building-the-msi)
+  - [Installing via MSI](#installing-via-msi)
+  - [Silent install and uninstall](#silent-install-and-uninstall)
 - [Usage](#usage)
   - [Reading events](#reading-events)
   - [Sample output](#sample-output)
@@ -189,10 +193,14 @@ valhalla/
 |   `-- src/
 |       |-- main.rs             # Opens \\.\Valhalla, ReadFile loop, prints events
 |       `-- error_msg.rs        # FormatMessageW wrapper for Win32 errors
+|-- valhalla-installer/         # MSI installer builder crate (uses the `msi` crate)
+|   |-- Cargo.toml              # name = "valhalla-installer"
+|   `-- src/
+|       `-- main.rs             # Builds valhalla-<version>-x64.msi from release artifacts
 `-- xtask/                      # Cargo-powered build orchestrator
     |-- Cargo.toml
     `-- src/
-        `-- main.rs             # cargo xtask driver|client|clean|sign
+        `-- main.rs             # cargo xtask driver|client|msi|clean|sign
 ```
 
 ### Kernel-mode driver (`valhalla-km`)
@@ -283,6 +291,7 @@ Valhalla follows the [cargo xtask pattern](https://github.com/matklad/cargo-xtas
 |---|---|
 | `cargo xtask client` | `cargo build --release -p valhalla-client` |
 | `cargo xtask driver` | Builds `valhalla`, renames `.dll` to `.sys`, then calls `sign` |
+| `cargo xtask msi`    | Builds the client (and driver if present) then produces the MSI installer |
 | `cargo xtask sign`   | Invokes `signtool` against `target\release\valhalla.sys` using the `DriverCertificate` from `PrivateCertStore` |
 | `cargo xtask clean`  | Removes the `target/` directory |
 
@@ -532,6 +541,60 @@ If `sc stop` hangs, the driver is likely stuck in an IRP that never completes, o
 
 ---
 
+## MSI Installer
+
+Valhalla ships a pure-Rust MSI installer builder (`valhalla-installer` crate) that produces a standard `valhalla-<version>-x64.msi` package using the [`msi`](https://crates.io/crates/msi) crate. The MSI embeds:
+
+- The user-mode client (`valhalla-client.exe`)
+- The kernel-mode driver (`valhalla.sys`), if present in `target/release/`
+- Start Menu shortcuts under `ProgramMenuDir`
+- Add/Remove Programs (ARP) registry entries for clean uninstall via "Apps & Features"
+- The project's banner and logo images (embedded as `Binary` table streams, available for installer GUI branding)
+- Standard MSI tables: `Property`, `Directory`, `Component`, `Feature`, `FeatureComponents`, `File`, `Media`, `Shortcut`, `Registry`, `Binary`, and `InstallExecuteSequence`
+
+The installer is deterministic: product, upgrade, package, and component codes are derived as `Uuid::new_v5` from a fixed namespace, so two builds of the same version produce byte-identical GUIDs. This is required for MSI upgrade semantics to work correctly.
+
+### Building the MSI
+
+```powershell
+# Build the client, driver (if signing toolchain is available), then the MSI:
+cargo xtask msi
+
+# Or invoke the installer directly with custom paths:
+cargo run --release -p valhalla-installer -- target\release output\valhalla.msi
+```
+
+The output MSI appears at `target/release/valhalla-0.1.0-x64.msi` (typical size: ~410 KB with both client and driver, ~360 KB with client only).
+
+### Installing via MSI
+
+Double-click the `.msi` file in Explorer, or from an elevated shell:
+
+```powershell
+msiexec /i valhalla-0.1.0-x64.msi
+```
+
+This installs the client to `C:\Program Files\Valhalla\`, creates a Start Menu shortcut, and registers an uninstall entry. The kernel-mode driver is copied next to the client but is **not** automatically loaded as a service (the MSI cannot start a driver that requires test-signing without a reboot). After installing, follow the [Loading the driver](#loading-the-driver) steps to register and start the service.
+
+### Silent install and uninstall
+
+```powershell
+# Silent install (no UI, logs to file):
+msiexec /i valhalla-0.1.0-x64.msi /qn /norestart /L*v install.log
+
+# Silent uninstall:
+msiexec /x valhalla-0.1.0-x64.msi /qn
+
+# Or via the product upgrade code:
+msiexec /x "{UPGRADE-CODE-GUID}" /qn
+```
+
+The MSI sets `ALLUSERS=1`, so it installs machine-wide and requires admin privileges. Group Policy / SCCM / Intune deployment is supported via standard `msiexec` silent options.
+
+> **Note:** The MSI itself is not code-signed by default. For enterprise deployment you should sign it with an Authenticode certificate (e.g., `signtool sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 /a valhalla-0.1.0-x64.msi`) before distribution.
+
+---
+
 ## Usage
 
 ### Reading events
@@ -729,6 +792,43 @@ The repo's README keeps an aspirational roadmap; the actively-tracked items are:
 - [ ] **Per-CPU ring buffer** with `KEVENT`-based signaling so the client can block-wait for new events instead of polling.
 - [ ] **ACL on the device object** via `IoCreateDeviceSecure`, so non-admin processes can be denied.
 - [ ] **ETW provider** as an alternative transport to the IOCTL/read pipe.
+
+---
+
+## Release notes
+
+### v0.1.0 (2026-07-04)
+
+Initial public release of the Rust-native Valhalla kernel monitor.
+
+**Added**
+
+- Kernel-mode driver (`valhalla-km`) registering four notification callbacks:
+  - `PsSetCreateProcessNotifyRoutineEx` for process create/exit
+  - `PsSetCreateThreadNotifyRoutine` for thread create/exit
+  - `PsSetLoadImageNotifyRoutine` for image load
+  - `CmRegisterCallbackEx` for `HKEY_LOCAL_MACHINE` registry value-set events
+- 256-event kernel ring buffer guarded by a `FastMutex` with RAII `AutoLock`
+- `Cleaner` struct providing rollback for partial-init failures in `DriverEntry`
+- User-mode client (`valhalla-um`) that opens `\\.\Valhalla`, drains the ring via `ReadFile`, and pretty-prints events
+- Shared `no_std` protocol crate (`common`) with `#[repr(C)]` `ItemInfo` enum and 64-byte `StringBuff`
+- `xtask` build orchestrator with `client`, `driver`, `sign`, `clean`, and `msi` tasks
+- Pure-Rust MSI installer builder (`valhalla-installer`) producing `valhalla-0.1.0-x64.msi` with:
+  - Standard MSI tables (`Property`, `Directory`, `Component`, `Feature`, `File`, `Shortcut`, `Registry`, `Binary`, `InstallExecuteSequence`)
+  - Embedded banner and logo images for installer GUI branding
+  - Add/Remove Programs entries for clean uninstall
+  - Start Menu shortcut
+  - Deterministic v5 UUIDs for stable upgrade semantics
+- WebP image assets (hero banner, architecture diagram, data flow, logo)
+- Comprehensive README with architecture deep-dive, build/install/usage guide, troubleshooting, and FAQ
+
+**Known limitations**
+
+- The user-mode client reads once and exits; a continuous event loop is on the roadmap.
+- The registry callback only surfaces `HKEY_LOCAL_MACHINE` writes to keep noise manageable.
+- `StringBuff` truncates strings to 63 bytes; long paths and key names will be cut.
+- The MSI is not Authenticode-signed by default.
+- The device object has no ACL; any user-mode process that can open `\\.\Valhalla` can read events.
 
 ---
 
