@@ -58,8 +58,8 @@ use winapi::{
     },
 };
 
-const DEVICE_NAME: &str = "\\Device\\SysMon";
-const SYM_LINK_NAME: &str = "\\??\\SysMon";
+const DEVICE_NAME: &str = "\\Device\\Valhalla";
+const SYM_LINK_NAME: &str = "\\??\\Valhalla";
 
 const MAX_ITEM_COUNT: usize = 256;
 
