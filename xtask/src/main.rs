@@ -18,6 +18,7 @@ fn try_main() -> Result<(), DynError> {
     match task.as_deref() {
         Some("client") => produce_client()?,
         Some("driver") => produce_driver()?,
+        Some("msi") => produce_msi()?,
         Some("clean") => clean()?,
         Some("sign") => sign(
             "target\\release\\valhalla.sys",
@@ -32,7 +33,11 @@ fn print_help() {
     println!("{:?}", env::args());
     eprintln!(
         "Tasks:
-         - driver: builds application and man pages
+         - client: build the user-mode client (valhalla-client.exe)
+         - driver: build, rename, and sign the kernel-mode driver (valhalla.sys)
+         - msi:    build the MSI installer (valhalla-<version>-x64.msi)
+         - sign:   sign an existing valhalla.sys
+         - clean:  remove the target/ directory
 "
     )
 }
@@ -116,6 +121,22 @@ fn sign(_driver_path: &str, _cert_path: &str) -> Result<(), DynError> {
 
 fn produce_client() -> Result<(), DynError> {
     build_release_binary("valhalla-client")?;
+    Ok(())
+}
+
+fn produce_msi() -> Result<(), DynError> {
+    // Ensure the client (and driver, if available) are built first.
+    build_release_binary("valhalla-client")?;
+    // The installer crate is itself a workspace member, so build it.
+    build_release_binary("valhalla-installer")?;
+
+    let release_dir = project_root().join("target/release");
+    let status = Command::new(release_dir.join("valhalla-installer.exe"))
+        .current_dir(project_root())
+        .status()?;
+    if !status.success() {
+        Err("valhalla-installer failed")?;
+    }
     Ok(())
 }
 
