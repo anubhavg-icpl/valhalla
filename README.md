@@ -1,8 +1,12 @@
 <p align="center">
-  <img src="docs/assets/images/hero-banner.png" alt="Valhalla - Rust Windows Kernel Monitor" width="720"/>
+  <img src="docs/assets/images/logo.webp" alt="Valhalla logo" width="120"/>
 </p>
 
 <h1 align="center">Valhalla</h1>
+
+<p align="center">
+  <img src="docs/assets/images/hero-banner.webp" alt="Valhalla - Rust Windows Kernel Monitor" width="720"/>
+</p>
 
 <p align="center">
   A lightweight, <strong>Rust-native</strong> Windows kernel-mode monitoring driver and companion user-mode client that captures process, thread, image-load, and registry events in real time.
@@ -154,7 +158,7 @@ You should see live process, thread, image-load, and HKLM registry events printe
 Valhalla is a Cargo workspace composed of four crates. The high-level shape is intentionally close to a textbook WDM driver, with Rust idioms layered on top.
 
 <p align="center">
-  <img src="docs/assets/images/architecture-diagram.png" alt="Valhalla architecture diagram" width="860"/>
+  <img src="docs/assets/images/architecture-diagram.webp" alt="Valhalla architecture diagram" width="860"/>
 </p>
 
 ### Workspace layout
@@ -287,7 +291,7 @@ The `sign` task shells out to `vcvars64.bat` to bring the Visual Studio toolchai
 ### Data flow
 
 <p align="center">
-  <img src="docs/assets/images/data-flow.png" alt="Valhalla data flow" width="780"/>
+  <img src="docs/assets/images/data-flow.webp" alt="Valhalla data flow" width="780"/>
 </p>
 
 ```
