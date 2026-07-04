@@ -1,7 +1,7 @@
 [workspace]
 resolver = "2"
-members = [ "sysmon-km",
-    "sysmon-um" ,
+members = [ "valhalla-km",
+    "valhalla-um" ,
     "common" ,
     "xtask" ,
 ]
