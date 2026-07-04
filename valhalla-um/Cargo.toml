@@ -2,10 +2,14 @@
 name = "valhalla-client"
 version = "0.1.0"
 edition = "2021"
+build = "build.rs"
 
 [dependencies]
 common = { path = "../common" }
 native-windows-gui = "1"
+
+[build-dependencies]
+winres = "0.1"
 
 [dependencies.windows]
 version = "0.52"
