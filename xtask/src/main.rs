@@ -46,7 +46,10 @@ fn clean() -> Result<(), DynError> {
 
 fn produce_driver() -> Result<(), DynError> {
     build_release_binary("valhalla")?;
-    std::fs::rename("target\\release\\valhalla.dll", "target\\release\\valhalla.sys")?;
+    std::fs::rename(
+        "target\\release\\valhalla.dll",
+        "target\\release\\valhalla.sys",
+    )?;
     sign(
         "target\\release\\valhalla.sys",
         "valhalla-km\\DriverCertificate.cer",
