@@ -992,7 +992,7 @@ mod tests {
         let mut package = Package::open(cursor).unwrap();
         assert_eq!(
             package.summary_info().title(),
-            Some("Valhalla 0.1.0 Installer")
+            Some("Installation Database")
         );
 
         let rows = package

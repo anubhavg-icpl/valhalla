@@ -3,7 +3,7 @@ mod error_msg;
 use crate::error_msg::print_last_error;
 use common::ItemInfo;
 use native_windows_gui as nwg;
-use std::{cell::RefCell, mem::size_of, ptr::null_mut, rc::Rc};
+use std::{mem::size_of, ptr::null_mut};
 use windows::core::imp::HANDLE;
 use windows_sys::Win32::{
     Foundation::{GENERIC_READ, INVALID_HANDLE_VALUE},
@@ -32,35 +32,40 @@ fn run_gui() {
         std::process::exit(1);
     }
 
-    let app = Rc::new(RefCell::new(ValhallaApp::default()));
+    // Leak the app so we get a stable address for the lifetime of the process.
+    // We use a raw pointer so the Fn closure can access it (Fn closures can't
+    // capture &mut). This is safe because:
+    // - The allocation lives forever (Box::leak)
+    // - All access happens on the dispatch thread (single-threaded)
+    // - There is no reentrancy in the event handlers
+    let app_ptr: *mut ValhallaApp = Box::leak(Box::new(ValhallaApp::default()));
 
-    if let Err(e) = ValhallaApp::build(&app) {
-        eprintln!("Failed to build GUI: {e}");
-        std::process::exit(1);
+    // Build the UI. Safe because single-threaded, before event loop.
+    unsafe {
+        if let Err(e) = ValhallaApp::build(&mut *app_ptr) {
+            eprintln!("Failed to build GUI: {e}");
+            std::process::exit(1);
+        }
+        (*app_ptr).set_status("Polling driver every 500ms...");
     }
 
-    let app_tick = app.clone();
-    nwg::full_bind_event_handler(&app.borrow().window.handle, move |evt, _data, handle| {
-        let mut a = app_tick.borrow_mut();
+    let window_handle = unsafe { (*app_ptr).window.handle };
+    let refresh_handle = unsafe { (*app_ptr).refresh_btn.handle };
+    let clear_handle = unsafe { (*app_ptr).clear_btn.handle };
+    let timer_handle = unsafe { (*app_ptr).timer.handle };
+
+    nwg::full_bind_event_handler(&window_handle, move |evt, _data, handle| {
         use nwg::Event;
+        let a: &mut ValhallaApp = unsafe { &mut *app_ptr };
         match evt {
-            Event::OnButtonClick if handle == a.refresh_btn.handle => {
-                a.poll_driver();
-            },
-            Event::OnButtonClick if handle == a.clear_btn.handle => {
-                a.clear_events();
-            },
-            Event::OnTimerTick if handle == a.timer.handle => {
-                a.poll_driver();
-            },
-            Event::OnWindowClose if handle == a.window.handle => {
-                nwg::stop_thread_dispatch();
-            },
+            Event::OnButtonClick if handle == refresh_handle => a.poll_driver(),
+            Event::OnButtonClick if handle == clear_handle => a.clear_events(),
+            Event::OnTimerTick if handle == timer_handle => a.poll_driver(),
+            Event::OnWindowClose if handle == window_handle => nwg::stop_thread_dispatch(),
             _ => {},
         }
     });
 
-    app.borrow().set_status("Polling driver every 500ms...");
     nwg::dispatch_thread_events();
 }
 
@@ -76,41 +81,39 @@ struct ValhallaApp {
 }
 
 impl ValhallaApp {
-    fn build(app: &Rc<RefCell<ValhallaApp>>) -> Result<(), nwg::NwgError> {
-        let mut a = app.borrow_mut();
-
+    fn build(app: &'static mut ValhallaApp) -> Result<(), nwg::NwgError> {
         nwg::Window::builder()
             .size((920, 580))
             .position((300, 200))
             .title("Valhalla - Kernel Event Monitor")
-            .build(&mut a.window)?;
+            .build(&mut app.window)?;
 
         nwg::ListView::builder()
-            .parent(&a.window)
+            .parent(&app.window)
             .size((880, 450))
             .position((20, 20))
             .list_style(nwg::ListViewStyle::Detailed)
-            .build(&mut a.list)?;
+            .build(&mut app.list)?;
 
-        a.list.insert_column(nwg::InsertListViewColumn {
+        app.list.insert_column(nwg::InsertListViewColumn {
             index: Some(0),
             width: Some(90),
             fmt: None,
             text: Some("Time".to_string()),
         });
-        a.list.insert_column(nwg::InsertListViewColumn {
+        app.list.insert_column(nwg::InsertListViewColumn {
             index: Some(1),
             width: Some(120),
             fmt: None,
             text: Some("Type".to_string()),
         });
-        a.list.insert_column(nwg::InsertListViewColumn {
+        app.list.insert_column(nwg::InsertListViewColumn {
             index: Some(2),
             width: Some(70),
             fmt: None,
             text: Some("PID".to_string()),
         });
-        a.list.insert_column(nwg::InsertListViewColumn {
+        app.list.insert_column(nwg::InsertListViewColumn {
             index: Some(3),
             width: Some(580),
             fmt: None,
@@ -119,28 +122,27 @@ impl ValhallaApp {
 
         nwg::Button::builder()
             .text("Refresh Now")
-            .parent(&a.window)
+            .parent(&app.window)
             .size((140, 35))
             .position((20, 490))
-            .build(&mut a.refresh_btn)?;
+            .build(&mut app.refresh_btn)?;
 
         nwg::Button::builder()
             .text("Clear")
-            .parent(&a.window)
+            .parent(&app.window)
             .size((100, 35))
             .position((170, 490))
-            .build(&mut a.clear_btn)?;
+            .build(&mut app.clear_btn)?;
 
         nwg::StatusBar::builder()
-            .parent(&a.window)
-            .build(&mut a.status)?;
+            .parent(&app.window)
+            .build(&mut app.status)?;
 
         nwg::AnimationTimer::builder()
-            .parent(&a.window)
+            .parent(&app.window)
             .interval(std::time::Duration::from_millis(POLL_INTERVAL_MS))
-            .build(&mut a.timer)?;
+            .build(&mut app.timer)?;
 
-        drop(a);
         Ok(())
     }
 
