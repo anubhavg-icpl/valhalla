@@ -20,8 +20,8 @@ fn try_main() -> Result<(), DynError> {
         Some("driver") => produce_driver()?,
         Some("clean") => clean()?,
         Some("sign") => sign(
-            "target\\release\\sysmon.sys",
-            "sysmon-km\\DriverCertificate.cer",
+            "target\\release\\valhalla.sys",
+            "valhalla-km\\DriverCertificate.cer",
         )?,
         _ => print_help(),
     }
@@ -112,7 +112,7 @@ fn sign(_driver_path: &str, _cert_path: &str) -> Result<(), DynError> {
 }
 
 fn produce_client() -> Result<(), DynError> {
-    build_release_binary("sysmon-client")?;
+    build_release_binary("valhalla-client")?;
     Ok(())
 }
 
