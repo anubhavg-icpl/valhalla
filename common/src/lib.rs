@@ -5,7 +5,15 @@ use alloc::string::String;
 use core::fmt::Formatter;
 
 pub const BUFF_SIZE: usize = 64;
+
+#[derive(Clone)]
 pub struct StringBuff([u8; BUFF_SIZE]);
+
+impl StringBuff {
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
+}
 
 #[repr(C)]
 #[derive(Debug)]
