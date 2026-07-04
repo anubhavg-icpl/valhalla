@@ -69,6 +69,17 @@ fn component_guid(logical: &str) -> Uuid {
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().collect();
+
+    // Hidden inspect mode: `valhalla-installer inspect <path.msi>` prints all
+    // tables and row counts. Used for debugging MSI structure issues.
+    if args.get(1).map(String::as_str) == Some("inspect") {
+        let path = args
+            .get(2)
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("target/release/valhalla-0.1.0-x64.msi"));
+        return inspect_msi(&path);
+    }
+
     let release_dir = args
         .get(1)
         .map(PathBuf::from)
@@ -103,6 +114,34 @@ fn pretty_size(bytes: u64) -> String {
     } else {
         format!("{:.1} {}", size, UNITS[unit])
     }
+}
+
+// ---------------------------------------------------------------------------
+// MSI inspection (debug mode)
+// ---------------------------------------------------------------------------
+
+fn inspect_msi(path: &Path) -> ExitCode {
+    use msi::Select;
+    let package = match msi::open(path) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("error opening {}: {e}", path.display());
+            return ExitCode::FAILURE;
+        },
+    };
+    println!("Package type: {:?}", package.package_type());
+    println!("Tables:");
+    let mut table_names: Vec<String> = package.tables().map(|t| t.name().to_string()).collect();
+    table_names.sort();
+    let mut package = package;
+    for name in table_names {
+        let count = package
+            .select_rows(Select::table(&name))
+            .map(|r| r.len())
+            .unwrap_or(0);
+        println!("  {name}: {count} rows");
+    }
+    ExitCode::SUCCESS
 }
 
 // ---------------------------------------------------------------------------
@@ -170,9 +209,11 @@ fn build_msi(release_dir: &Path, out_path: &Path) -> Result<()> {
     create_binary_table(&mut package, banner_bytes.as_deref(), logo_bytes.as_deref())?;
     create_install_execute_sequence_table(&mut package)?;
 
-    // Extract the in-memory MSI and persist it to the output file. The msi
-    // crate flushes on Drop, so `into_inner` is the way to recover the
-    // underlying cursor.
+    // Flush the MSI: this runs the finisher (which writes the
+    // \x05SummaryInformation stream and the string pool) and then flushes
+    // the underlying cfb compound file (FAT, directory, streams) to the
+    // writer. Without flush(), into_inner() returns an incomplete file.
+    package.flush().context("failed to flush MSI")?;
     let cursor = package
         .into_inner()
         .context("failed to finalize in-memory MSI")?;
@@ -194,7 +235,9 @@ fn read_bytes(path: &Path) -> Result<Vec<u8>> {
 fn set_summary_info<F: Read + Write + Seek>(package: &mut Package<F>) -> Result<()> {
     let s = package.summary_info_mut();
     s.set_codepage(msi::CodePage::Utf8);
-    s.set_title(format!("{PRODUCT_NAME} {PRODUCT_VERSION} Installer"));
+    // Title must be "Installation Database" for Windows Installer to recognize
+    // the package type.
+    s.set_title("Installation Database");
     s.set_subject(format!("{PRODUCT_NAME} {PRODUCT_VERSION}"));
     s.set_author(MANUFACTURER.to_string());
     s.set_creating_application(format!("{PRODUCT_NAME}-installer {PRODUCT_VERSION}"));
@@ -205,6 +248,23 @@ fn set_summary_info<F: Read + Write + Seek>(package: &mut Package<F>) -> Result<
          client. This package installs the user-mode client and (optionally) the kernel-mode \
          driver."
     ));
+
+    // Required summary properties for msiexec to accept the package.
+    // Template: platform;language  (e.g. "x64;1033")
+    s.set_arch("x64");
+    s.set_languages(&[msi::Language::from_code(PRODUCT_LANGUAGE)]);
+    // Keywords must contain "Installer" for shell recognition.
+    let keywords = vec!["Installer".to_string(), PRODUCT_NAME.to_string()];
+    s.set_keywords(&keywords);
+    // Page Count = minimum installer version (500 = MSI 5.0).
+    s.set_page_count(500);
+    // Word Count bit flags: 0 = uncompressed source files.
+    s.set_word_count(0);
+    s.set_character_count(100);
+    // Doc Security: 2 = read-only recommended.
+    s.set_doc_security(2);
+    s.set_last_saved_by(MANUFACTURER.to_string());
+    s.set_last_save_time_to_now();
     Ok(())
 }
 
