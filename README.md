@@ -122,38 +122,102 @@ Events are buffered in a kernel ring (capacity 256 events) and drained by the us
 
 ## Quick Start
 
-The fastest way to see Valhalla in action. Assumes Windows 10/11 x64 with admin rights and test signing enabled on a VM.
+The fastest way to see Valhalla in action. Assumes Windows 10/11 x64 with admin rights on a **VM** (do not install test-signed drivers on bare metal you care about).
+
+### 1. Install prerequisites
+
+| Component | How to install |
+|---|---|
+| **Rust nightly** | `rustup toolchain install nightly-x86_64-pc-windows-msvc` (auto-selected via `rust-toolchain.toml`) |
+| **Windows SDK + WDK** | Download from Microsoft (provides kernel libs for the driver build) |
+| **WiX Toolset v3** | `winget install WiXToolset.WiXToolset` or extract `wix314-binaries.zip` to `C:\wix314` (for MSI generation) |
+| **PowerShell 7+** | Already on Windows 11; install via `winget install Microsoft.PowerShell` if needed |
+
+### 2. Clone and build
 
 ```powershell
-# 1. Clone
 git clone https://github.com/anubhavg-icpl/valhalla.git
 cd valhalla
 
-# 2. Make sure you are on the nightly toolchain (auto-selected via rust-toolchain.toml)
-rustup toolchain install nightly-x86_64-pc-windows-msvc
-
-# 3. Build everything (driver .dll -> .sys + client .exe)
+# Build all crates (driver .dll, client .exe, installer)
 cargo build --release
+```
 
-# 4. Build & sign the driver via xtask (requires Visual Studio BuildTools + WDK)
-cargo xtask driver
+### 3. Create a test signing certificate (one-time)
 
-# 5. Enable test signing (one-time, requires reboot)
+```powershell
+# Create a self-signed code-signing cert (run in an elevated PowerShell)
+$cert = New-SelfSignedCertificate -Subject "CN=DriverCertificate" `
+    -CertStoreLocation "Cert:\LocalMachine\My" `
+    -KeyUsage DigitalSignature -Type CodeSigningCert `
+    -KeyAlgorithm RSA -KeyLength 2048 `
+    -NotAfter (Get-Date).AddYears(1)
+
+# Add to PrivateCertStore (where signtool finds it)
+$store = New-Object System.Security.Cryptography.X509Certificates.X509Store("PrivateCertStore", "CurrentUser")
+$store.Open("ReadWrite"); $store.Add($cert); $store.Close()
+
+# Add to Trusted Root so the signature is trusted locally
+$root = New-Object System.Security.Cryptography.X509Certificates.X509Store("Root", "LocalMachine")
+$root.Open("ReadWrite"); $root.Add($cert); $root.Close()
+
+# Export the public key (already in the repo, but refresh it)
+Export-Certificate -Cert $cert -FilePath "valhalla-km\DriverCertificate.cer" -Force
+```
+
+### 4. Sign and install the driver
+
+```powershell
+# Sign the driver binary
+cargo xtask sign
+
+# Enable test signing (ONE-TIME, REQUIRES REBOOT)
 bcdedit.exe -set TESTSIGNING ON
+# >>> REBOOT NOW <<<
 
-# 6. Install and start the driver service (admin shell)
+# After reboot, install and start the driver service (elevated shell)
 sc create valhalla type= kernel binPath= "D:\valhalla\target\release\valhalla.sys"
 sc start valhalla
 
-# 7. In another shell, run the client to drain events
-.\target\release\valhalla-client.exe
-
-# 8. When done
-sc stop valhalla
-sc delete valhalla
+# Verify it's running
+sc query valhalla    # should show STATE: 4 RUNNING
 ```
 
-You should see live process, thread, image-load, and HKLM registry events printed to the console.
+### 5. Run the GUI client
+
+```powershell
+.\target\release\valhalla-client.exe
+```
+
+This opens a **native Windows popup window** with a live event list:
+
+- **Time / Type / PID / Details** columns showing every process, thread, image-load, and registry event
+- Auto-polls the driver every 500ms
+- **Refresh Now** button for manual polling
+- **Clear** button to wipe the list
+- Status bar showing event count
+
+To use the old console-only mode: `valhalla-client.exe --cli`
+
+### 6. Build the MSI installer (optional)
+
+```powershell
+cargo xtask msi
+# Produces target\release\valhalla-0.1.0-x64.msi with:
+#   - Native WiX GUI wizard with Valhalla branding
+#   - Feature tree (Client / Driver)
+#   - Start Menu shortcut, Add/Remove Programs entry
+```
+
+### 7. When done
+
+```powershell
+sc stop valhalla
+sc delete valhalla
+
+# To disable test signing later:
+bcdedit.exe -set TESTSIGNING OFF   # requires reboot
+```
 
 ---
 
@@ -597,29 +661,61 @@ The MSI sets `ALLUSERS=1`, so it installs machine-wide and requires admin privil
 
 ## Usage
 
-### Reading events
+### Prerequisites checklist
 
-Open an elevated shell on the same machine the driver is running on and invoke the client:
+Before running the client, make sure:
+
+1. **Test signing is enabled** - `bcdedit.exe -set TESTSIGNING ON` followed by a reboot. Check with `bcdedit /enum | findstr testsigning`.
+2. **The driver is signed** - Run `signtool verify /pa target\release\valhalla.sys`. If unsigned, run `cargo xtask sign`.
+3. **The driver service is running** - `sc query valhalla` should report `STATE: 4 RUNNING`.
+
+### GUI mode (default)
 
 ```powershell
 .\target\release\valhalla-client.exe
 ```
 
-The client opens `\\.\Valhalla`, issues a single 64 KiB `ReadFile`, and prints every `ItemInfo` it received. Each event is printed via Rust's `Debug` impl, which respects the `StringBuff` formatter (string fields appear as quoted, NUL-trimmed UTF-8).
+Opens a native Windows popup window titled "Valhalla - Kernel Event Monitor" with:
 
-To get a continuous stream, wrap the client in a loop:
+- A 4-column list view (Time, Type, PID, Details) showing every event
+- Automatic polling every 500ms (configurable via `POLL_INTERVAL_MS` in source)
+- **Refresh Now** button for manual one-shot polling
+- **Clear** button to wipe the event list
+- Status bar showing total event count or connection status
+
+If the driver is not running, the status bar will show: `Cannot connect to \\.\Valhalla. Is the driver running?`
+
+### CLI mode
 
 ```powershell
-while ($true) { .\target\release\valhalla-client.exe; Start-Sleep -Milliseconds 100 }
+.\target\release\valhalla-client.exe --cli
 ```
 
-### Sample output
+Opens `\\.\Valhalla`, issues a single 64 KiB `ReadFile`, and prints every `ItemInfo` to the console. For a continuous stream:
+
+```powershell
+while ($true) { .\target\release\valhalla-client.exe --cli; Start-Sleep -Milliseconds 100 }
+```
+
+### Sample GUI output
+
+The GUI list view shows events in a readable format:
+
+| Time | Type | PID | Details |
+|---|---|---|---|
+| 18:30:05 | Process Create | 4884 | PID 4884 <- 7260  "C:\Windows\System32\notepad.exe" |
+| 18:30:05 | Thread Create | 4884 | TID 9216 in PID 4884 |
+| 18:30:05 | Image Load | 4884 | PID 4884 @ 0x7ff6... (2095104 bytes)  ...\notepad.exe |
+| 18:30:06 | Registry Set | 4884 | PID 4884 TID 9216 type=1  \REGISTRY\MACHINE\...\Notepad\Default |
+| 18:30:06 | Thread Exit | 4884 | TID 9216 in PID 4884 |
+| 18:30:06 | Process Exit | 4884 | PID 4884 exited |
+
+### Sample CLI output
 
 ```
-Hello, world!
-after!
-CreateFile success!
-Read success! Bytes: 368
+Valhalla client - CLI mode
+Connected to driver.
+Read 368 bytes.
 ProcessCreate { pid: 4884, parent_pid: 7260, command_line: "\"C:\\Windows\\System32\\notepad.exe\"" }
 ThreadCreate { pid: 4884, tid: 9216 }
 ImageLoad { pid: 4884, load_address: 140727834132480, image_size: 2095104, image_file_name: "\Device\HarddiskVolume3\Windows\System32\notepad.exe" }
@@ -681,7 +777,16 @@ sc qc valhalla
 
 Make sure `BINARY_PATH_NAME` points to the actual `.sys` location. Paths with spaces must be quoted in the original `sc create`.
 
-### `CreateFile` returns `INVALID_HANDLE_VALUE` from the client
+### GUI shows "Cannot connect to \\.\Valhalla. Is the driver running?"
+
+The client cannot open the device. Common causes in order of likelihood:
+
+1. **Driver service not started.** Run `sc query valhalla`. If it shows `STOPPED`, run `sc start valhalla`.
+2. **Driver service not installed.** Run `sc create valhalla type= kernel binPath= "<full path to valhalla.sys>"`.
+3. **Driver not signed.** Run `signtool verify /pa valhalla.sys`. If it fails, run `cargo xtask sign`.
+4. **Test signing not enabled.** Run `bcdedit /enum | findstr testsigning`. If empty, run `bcdedit -set TESTSIGNING ON` and **reboot**.
+
+### `CreateFile` returns `INVALID_HANDLE_VALUE` from the CLI client
 
 The driver is not running, or the symbolic link was not created. Verify:
 
