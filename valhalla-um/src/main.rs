@@ -14,7 +14,7 @@ fn main() {
 
     unsafe {
         let h_file = CreateFileA(
-            c"\\\\.\\SysMon".as_ptr() as *const u8,
+            c"\\\\.\\Valhalla".as_ptr() as *const u8,
             GENERIC_READ,
             0,
             null_mut(),
